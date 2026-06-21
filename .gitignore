@@ -10,4 +10,5 @@ vectorstore/chroma/
 
 .DS_Store
 
-*.log
+*.logerror_output.txt
+response.json
