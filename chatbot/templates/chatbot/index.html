@@ -1,0 +1,388 @@
+<!--
+VIBE-CODING PROMPT:
+Telegram-style Persian chatbot UI for testing a Django REST chatbot API.
+Endpoint: /api/chat/debounce/
+Features: RTL bubbles, debounced sending, loading state, handoff status, sources,
+optional transaction_start_time support.
+-->
+
+<!DOCTYPE html>
+<html lang="fa" dir="rtl">
+<head>
+    <meta charset="UTF-8">
+    <title>چت‌بات پشتیبانی تبدیل</title>
+
+    <style>
+        * {
+            box-sizing: border-box;
+        }
+
+        body {
+            margin: 0;
+            font-family: Arial, sans-serif;
+            background: #dfe8f3;
+        }
+
+        .chat-wrapper {
+            max-width: 760px;
+            height: 100vh;
+            margin: auto;
+            display: flex;
+            flex-direction: column;
+            background: #eef3f8;
+        }
+
+        .chat-header {
+            background: #229ed9;
+            color: white;
+            padding: 16px;
+            font-size: 18px;
+            font-weight: bold;
+            box-shadow: 0 2px 6px rgba(0, 0, 0, 0.15);
+        }
+
+        .chat-subtitle {
+            font-size: 12px;
+            font-weight: normal;
+            opacity: 0.9;
+            margin-top: 4px;
+        }
+
+        .chat-messages {
+            flex: 1;
+            overflow-y: auto;
+            padding: 18px;
+            display: flex;
+            flex-direction: column;
+            gap: 10px;
+        }
+
+        .message-row {
+            display: flex;
+            width: 100%;
+        }
+
+        .message-row.user {
+            justify-content: flex-start;
+        }
+
+        .message-row.bot {
+            justify-content: flex-end;
+        }
+
+        .bubble {
+            max-width: 75%;
+            padding: 12px 14px;
+            border-radius: 14px;
+            font-size: 15px;
+            line-height: 1.8;
+            white-space: pre-wrap;
+            word-break: break-word;
+        }
+
+        .user .bubble {
+            background: #d8f8c6;
+            border-bottom-right-radius: 4px;
+        }
+
+        .bot .bubble {
+            background: white;
+            border-bottom-left-radius: 4px;
+        }
+
+        .meta {
+            font-size: 12px;
+            color: #666;
+            margin-top: 8px;
+            border-top: 1px solid #eee;
+            padding-top: 6px;
+            direction: rtl;
+        }
+
+        .source-link {
+            display: block;
+            color: #1683bd;
+            text-decoration: none;
+            direction: ltr;
+            text-align: left;
+            margin-top: 4px;
+        }
+
+        .time-input {
+            background: white;
+            padding: 10px 12px;
+            border-top: 1px solid #eee;
+            display: flex;
+            flex-direction: column;
+            gap: 6px;
+        }
+        .time-btn {
+            margin-top: 6px;
+            border: none;
+            background: #229ed9;
+            color: white;
+            padding: 8px 12px;
+            border-radius: 8px;
+            cursor: pointer;
+        }
+
+        .time-input label {
+            font-size: 12px;
+            color: #555;
+        }
+
+        .time-input input {
+            width: 100%;
+            border: 1px solid #ddd;
+            border-radius: 10px;
+            padding: 9px;
+            font-size: 13px;
+            direction: ltr;
+        }
+
+        .time-help {
+            font-size: 11px;
+            color: #777;
+        }
+
+        .chat-input-area {
+            background: white;
+            padding: 12px;
+            display: flex;
+            gap: 8px;
+            align-items: center;
+            border-top: 1px solid #ddd;
+        }
+
+        .chat-input-area input {
+            flex: 1;
+            border: 1px solid #ddd;
+            border-radius: 24px;
+            padding: 12px 16px;
+            font-size: 15px;
+            outline: none;
+        }
+
+        .chat-input-area button {
+            border: none;
+            background: #229ed9;
+            color: white;
+            border-radius: 50%;
+            width: 46px;
+            height: 46px;
+            font-size: 18px;
+            cursor: pointer;
+        }
+
+        .chat-input-area button:disabled {
+            opacity: 0.6;
+            cursor: not-allowed;
+        }
+    </style>
+</head>
+
+<body>
+<div class="chat-wrapper">
+    <div class="chat-header">
+        چت‌بات پشتیبانی تبدیل
+        <div class="chat-subtitle">پاسخ‌گویی فارسی بر اساس مرکز راهنمای تبدیل</div>
+    </div>
+
+    <div id="messages" class="chat-messages">
+        <div class="message-row bot">
+            <div class="bubble">سلام 👋
+چطور می‌توانم کمکتان کنم؟</div>
+        </div>
+    </div>
+
+    <div class="time-input">
+        <label for="transactionTime">زمان شروع تراکنش اختیاری</label>
+        <input
+            type="text"
+            id="transactionTime"
+            placeholder="مثال: 2026-06-21T19:50:00+00:00"
+        >
+        <button
+            type="button"
+            onclick="fillCurrentTime()"
+            class="time-btn"
+        >
+            زمان فعلی
+        </button>
+        <div class="time-help">
+            فقط برای تست Time Tool پر شود. اگر خالی باشد، زمان ارسال نمی‌شود.
+        </div>
+    </div>
+
+    <div class="chat-input-area">
+        <input
+            id="messageInput"
+            placeholder="پیام خود را بنویسید..."
+            onkeydown="handleEnter(event)"
+        >
+        <button id="sendButton" onclick="sendMessage()">➤</button>
+    </div>
+</div>
+
+<script>
+    const SESSION_ID = "frontend-user";
+    const FRONTEND_DEBOUNCE_MS = 7000;
+
+    let debounceTimer = null;
+    let pendingMessages = [];
+    let isSending = false;
+
+    function appendMessage(type, text) {
+        const messages = document.getElementById("messages");
+
+        const row = document.createElement("div");
+        row.className = `message-row ${type}`;
+
+        const bubble = document.createElement("div");
+        bubble.className = "bubble";
+        bubble.innerText = text;
+
+        row.appendChild(bubble);
+        messages.appendChild(row);
+        messages.scrollTop = messages.scrollHeight;
+
+        return bubble;
+    }
+
+    function appendMeta(bubble, data) {
+        const metaDiv = document.createElement("div");
+        metaDiv.className = "meta";
+
+        const handoff = document.createElement("div");
+        handoff.innerText = `انتقال به پشتیبان: ${data.handoff ? "بله" : "خیر"}`;
+        metaDiv.appendChild(handoff);
+
+        if (data.sources && data.sources.length) {
+            const title = document.createElement("div");
+            title.innerText = "منابع:";
+            metaDiv.appendChild(title);
+
+            data.sources.forEach((source) => {
+                const link = document.createElement("a");
+                link.href = source;
+                link.target = "_blank";
+                link.rel = "noopener noreferrer";
+                link.className = "source-link";
+                link.innerText = source;
+                metaDiv.appendChild(link);
+            });
+        }
+
+        bubble.appendChild(metaDiv);
+    }
+
+    function handleEnter(event) {
+        if (event.key === "Enter") {
+            event.preventDefault();
+            sendMessage();
+        }
+    }
+
+    function sendMessage() {
+        const input = document.getElementById("messageInput");
+        const message = input.value.trim();
+
+        if (!message || isSending) {
+            return;
+        }
+
+        appendMessage("user", message);
+        pendingMessages.push(message);
+        input.value = "";
+
+        clearTimeout(debounceTimer);
+
+        debounceTimer = setTimeout(() => {
+            sendCombinedMessage();
+        }, FRONTEND_DEBOUNCE_MS);
+    }
+
+    function getTransactionStartTime() {
+        const rawValue = document.getElementById("transactionTime").value.trim();
+
+        if (!rawValue) {
+            return null;
+        }
+
+        const date = new Date(rawValue);
+
+        if (Number.isNaN(date.getTime())) {
+            alert("فرمت زمان شروع تراکنش درست نیست. مثال: 2026-06-21T19:50:00+00:00");
+            return null;
+        }
+
+        return date.toISOString();
+    }
+    function fillCurrentTime() {
+        const now = new Date();
+    
+        const local =
+            new Date(
+                now.getTime() -
+                now.getTimezoneOffset() * 60000
+            )
+            .toISOString()
+            .slice(0, 16);
+    
+        document.getElementById("transactionTime").value =
+            local;
+    }
+
+    async function sendCombinedMessage() {
+        if (!pendingMessages.length) {
+            return;
+        }
+
+        const combinedMessage = pendingMessages.join("\n");
+        pendingMessages = [];
+
+        const payload = {
+            session_id: SESSION_ID,
+            message: combinedMessage
+        };
+
+        const transactionStartTime = getTransactionStartTime();
+
+        if (transactionStartTime) {
+            payload.transaction_start_time = transactionStartTime;
+        }
+
+        const loadingBubble = appendMessage("bot", "در حال تایپ...");
+
+        isSending = true;
+        document.getElementById("sendButton").disabled = true;
+
+        try {
+            const response = await fetch("/api/chat/debounce/", {
+                method: "POST",
+                headers: {
+                    "Content-Type": "application/json"
+                },
+                body: JSON.stringify(payload)
+            });
+
+            const data = await response.json();
+
+            if (data.status === "queued") {
+                loadingBubble.remove();
+                return;
+            }
+
+            loadingBubble.innerText = data.answer || "پاسخی دریافت نشد.";
+            appendMeta(loadingBubble, data);
+
+        } catch (error) {
+            loadingBubble.innerText = "خطا در ارتباط با سرور.";
+        } finally {
+            isSending = false;
+            document.getElementById("sendButton").disabled = false;
+        }
+    }
+</script>
+</body>
+</html>
